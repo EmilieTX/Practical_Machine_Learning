@@ -1,20 +1,21 @@
 ---
 title: "Week 4 Project Write Up "
 Author: "Emilie Worsham"
-Date: "12/16/2017"
+Date: "12/28/2017"
 output:
   html_document: default
   pdf_document: default
 ---
 - Author: "Emilie Worsham"
-- Date: "12/16/2017"
+- Date: "12/28/2017"
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ## Project Background
+This project is the final project in the Practical Machine Learning Course. 
 
-
+**Project Background and Objective from the Course Website:**
 Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
 
 ## Data
@@ -31,22 +32,9 @@ https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
 
  http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har. 
 
-*To save space in the code & final prinout I loaded the following libraries to by RStudio:  *
-
-```{r, message=F, warning=F}
-
-library(rpart)
-library(rpart.plot)
-library(RColorBrewer)
-library(caret)
-library(randomForest)
-library(gbm)
-library(plyr)
-```
-
 ## Download and Clean the Training Data 
 
-```{r download, results='asis'}
+```{r download }
 
 ## download the training dataset 
 download.file(url = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", 
@@ -64,83 +52,154 @@ testing <- read.csv("C:/Users/erobe/Desktop/Saved Items/Coursera/Practical_Machi
 
 ```
 
-## Cleaning Data 
 
-In this Section I will clean the data and explain the process as I do it. I am removing all columns that contain N/A (null) values and any columns that do not appear in the testing table. 
+## Exploring the Data & Cleaning the Data
+First I wanted to see which columns are in both data sets. To be able to use both sets in modeling I will want to make sure that both sets have the same columns. 
+```{r explore, results='asis'}
+head(testing)
+head(training)
+```
 
-```{r clean, results='asis'}
+As you can see most of the columns are in both sets. Now I would like to see how many null values are in each data set 
+```{r nulls, }
+## This function will find the null values in each column in testing 
+na_count_testing <-sapply(testing, function(y) sum(length(which(is.na(y)))))
 
-features <- names(testing[,colSums(is.na(testing)) == 0])[8:59]
+## Show how many nulls are in each column using the new function 
+na_count_testing <- data.frame(na_count_testing)
+na_count_testing
+## This function will find the null values in each column in training 
+na_count_training <-sapply(training, function(y) sum(length(which(is.na(y)))))
 
-# Only use columns that appear in the testing cases.
-training <- training[,c(features,"classe")]
-testing <- testing[,c(features,"problem_id")]
+## Show how many nulls are in each column using the new function 
+na_count_training <- data.frame(na_count_training)
+na_count_training
 
-dim(training); dim(testing);
+```
+
+As you can see there are quite a few nulls in both datasets so I will want to remove those before creating any of the models. 
+
+```{r removenulls, }
+nonull_training <- training[,colSums(is.na(training)) == 0] 
+nonull_testing  <- testing[,colSums(is.na(testing)) == 0] 
+head(nonull_training)
+head(nonull_testing)
+colnames(nonull_training, prefix =  'col')
+colnames(nonull_testing, prefix =  'col')
+```
+
+Now the datasets have the same modeling columns, since we are using the model to predict the  "classe" variable the nonull_training dataset is the modeling dataset and the nonull_testing is now the crossvalidation dataset. This step is just to rename them for coding simplicity 
+
+```{r rename, results= 'asis'}
+testdf <- nonull_testing
+traindf <- nonull_training
 ```
 
 
+##Choosing Models
+For this project we were given the ablity to choose which modeling techiniques we wanted to use. Since my job includes some modeling I will chose a few that we use most. 
 
-## Setting up the Random Forest Model
+- Decision Tree
+- Random Forrest 
 
-Using the random forest model , the out of sample error should be small. 
-I will be estimating the error using the 40% testing sample. We should expect an error estimate of < 3%.
 
-```{r rfmodel, echo=FALSE}
-RandomForestModel <- randomForest(classe ~ ., data = training, method = "rf", importance = T, trControl = trainControl(method = "cv", classProbs=TRUE,savePredictions=TRUE,allowParallel=TRUE, number = 10))
 
-plot(RandomForestModel)
+**Decision Tree Model**
+```{r tree,  Warning = F, message=F}
+library(rpart)
+library(rpart.plot)
+
+model_tree <- rpart(
+                  classe ~ ., 
+                  data=traindf,
+                  method='class')
+
+## view Model 
+printcp(model_tree)
+
+## Print Tree
+plot(model_tree, uniform=TRUE, 
+   	main="Decision Tree")
+    text(model_tree, use.n=TRUE, all=TRUE, cex=.8)
+    
+    ## View Summary 
+summary(model_tree)
+
+## View RSquared
+
+rsq.rpart(model_tree)
+```
+I'm not really happy with the outcome of the decision tree, so I'm hoping that the outcome of the Random Forest is better. 
+
+
+
+## Using the Random Forest Model
+
+Now I will set up the Random Forest Model, according to my coworkers, it is the model that they use 90% of the time so my guess before i get started is the one I will end up using to predict the outcome. 
+
+```{r rfmodel, warning = F, }
+library(randomForest)
+library(caret)
+
+## Split traindf into two groups. Model Development and Model Validation. 
+sample.ind <- sample(2, 
+                     nrow(traindf),
+                     replace = T,
+                     prob = c(0.6,0.4))
+traindf_dev <- traindf[sample.ind==1,]
+traindf_val <- traindf[sample.ind==2,]
+
+
+## using the dev training data to create the model 
+Model_Forest <- randomForest(classe ~ ., data=traindf_dev,  method='rf', ntree=2)
+
+## Predicting using the model I just created using the training validation data set. 
+
+pred_train_val <- predict(Model_Forest, traindf_val)
+
+
+
+plot(Model_Forest)
+
+
+## Looking at the importance of each variable in the model. 
+varImpPlot(Model_Forest,
+           sort = T,
+           main="Variable Importance",
+           n.var=20)
+
+conf <- confusionMatrix(pred_train_val, traindf_val$classe)
+
+conf
+
+
 ```
 
 
-## Setting up the Boosting Model 
-
-```{r boostmodel, echo=FALSE}
-BoostingModel <- train(classe ~ ., method = "gbm", data = training,
-                    verbose = F,
-                    trControl = trainControl(method = "cv", number = 10))
-
-BoostingModel
-plot(BoostingModel)
-```
+**As you can see this model has an accuracy of 97%! That's unheard of in the "real world" so clearly Random Forrest is our choice.**
 
 
-------
-Now that the Models are set up now I will use them to predict the outcomes 
-------
 
-##Predicting with the Testing Data (pml-testing.csv)
+### Using the Model to Predict the Outcome
 
-
-**Random Tree Prediction**
-
-```{r RTPrediction, results='asis'}
-predictRT <- predict(RandomForestModel, testing)
-
-predictRT
-```
-
-** Boosting Model Prediction** 
-```{r boost, results='asis'}
-predictBoost <- predict(BoostingModel, testing)
-
-predictBoost
-```
+Now I will use the Random Forest model I just built to predict the outcome using the testing data. 
 
 
-### Submission File 
-
-As you can see from the Random Forest model outcome matrix it's about 99% accurate making it the more accurate of the two models. 
-
-```{r submission, message=F, warning=F}
-pm_files = function(x){
-  n = length(x)
-  for(i in 1:n){
-    filename = paste0("problem_id_",i,".txt")
-    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
-  }
+```{r predictions, message=F, warning=F}
+common <- intersect(names(traindf), names(testdf)) 
+for (p in common) { 
+  if (class(traindf[[p]]) == "factor") { 
+    levels(testdf[[p]]) <- levels(traindf[[p]]) 
+  } 
 }
 
-pm_files(predictRT)
+## Predictions for the course submission quiz. 
+pred_val <- predict(Model_Forest, testdf[,names(testdf)!="problem_id"])
+pred_val
 
 ```
+
+After putting these values into the quiz you I can see that the random forest model and it's predictions was the one to use. 
+
+
+
